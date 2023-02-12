@@ -1,17 +1,17 @@
-use cache_map::OnceCellMap;
-use itertools::{Either, max};
-use ndarray::ScalarOperand;
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::iter::Sum;
-use std::ops::{Add, Bound, Div, Mul, Neg, Sub};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::rc::Rc;
 
-use crate::model::expr::Expr;
-use crate::model::Functional;
-use crate::util::number::Number;
-use crate::util::ops::impl_ops_by_value;
-use crate::util::scalar::{Scalar, ScalarMethods};
+use itertools::{Either};
+use num::traits::{One, Pow, ToPrimitive, Zero};
+
+use crate::functional::Functional;
+use crate::once_cell_map::OnceCellMap;
+use crate::ops::impl_ops_by_value;
+use crate::scalar::{Scalar, simple_pow};
+use crate::term::Term;
 
 struct Inner<T: 'static> {
     imp: Box<dyn Fn(usize, &OrdinaryGen<T>) -> T>,
@@ -31,15 +31,19 @@ impl<T: Scalar> OrdinaryGen<T> {
         result
     }
     pub fn max_power(&self) -> Option<usize> { self.0.max }
-    pub fn powers(&self) -> impl Iterator<Item = usize> {
+    pub fn powers(&self) -> impl Iterator<Item=usize> {
         self.max_power()
             .map_or(Either::Right(0..), |max_power| Either::Left(0..=max_power))
+    }
+    pub fn terms(&self) -> impl Iterator<Item=Term<T, usize>> {
+        let this = self.clone();
+        this.powers().map(move |p| Term { co: this.gen(p), power: p })
     }
     #[track_caller]
     pub fn gen(&self, index: usize) -> T {
         self.0
             .cache
-            .get_or_init(&index, || (self.0.imp)(index, &self))
+            .get_or_init(index, || (self.0.imp)(index, &self))
             .clone()
     }
     pub fn multiply_by_power(self, power: usize) -> Self {
@@ -121,57 +125,36 @@ impl<T: Scalar> Neg for OrdinaryGen<T> {
 }
 
 impl<T: Scalar> OrdinaryGen<T> {
-    pub fn poly(x: BTreeMap<usize, T>) -> Self {
+    pub fn poly(iter: impl IntoIterator<Item=(T, usize)>) -> Self {
+        let map: BTreeMap<usize, T> = iter.into_iter().map(|(x, y)| (y, x)).collect();
         OrdinaryGen::new(
             //
-            Some(x.last_key_value().map_or(0, |(&m, _)| m)), //
-            move |n, _| x.get(&n).cloned().unwrap_or(T::from_isize(0)),
+            Some(map.last_key_value().map_or(0, |(&m, _)| m)), //
+            move |n, _| map.get(&n).cloned().unwrap_or(T::zero()),
         )
     }
-}
-
-impl<T: Scalar> OrdinaryGen<T> {
-    pub fn recip(self) -> Self {
-        let result = OrdinaryGen::new(None, move |n, cache| {
-            if n == 0 {
-                T::from_isize(1) / self.gen(0)
-            } else {
-                -T::from_isize(1) / self.gen(0)
-                    * (1..=n).map(|i| self.gen(i) * cache.gen(n - i)).sum::<T>()
-            }
-        });
-        result.gen(0);
-        result
+    pub fn poly_f64(iter: impl IntoIterator<Item=(f64, usize)>) -> Self {
+        Self::poly(iter.into_iter().map(|(x, y)| (T::from_num(x), y)))
     }
 }
 
 impl<T: Scalar> Debug for OrdinaryGen<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let max = self.max_power().unwrap_or(4);
-        for i in 0..=max {
-            write!(f, "{:.5}x^{}", self.gen(i), i)?;
-            if i != max {
-                write!(f, "+")?;
-            }
-        }
-        if self.max_power() > Some(max) {
-            write!(f, "+...")?;
-        }
-        Ok(())
+        Display::fmt(self, f)
     }
 }
 
-impl<T: Scalar> ScalarMethods for OrdinaryGen<T> {
+impl<T: Scalar> Scalar for OrdinaryGen<T> {
     fn sqrt(self) -> Self {
         OrdinaryGen::new(None, move |n, cache| {
             if n == 0 {
                 self.gen(0).sqrt()
             } else {
-                ((T::from_usize(n) / T::from_isize(2)) * self.gen(n)
+                ((T::from_num(n) / T::from_num(2)) * self.gen(n)
                     - (1..n)
-                        .map(|k| T::from_usize(k) * cache.gen(k) * cache.gen(n - k))
-                        .sum::<T>())
-                    / (T::from_usize(n) * cache.gen(0))
+                    .map(|k| T::from_num(k) * cache.gen(k) * cache.gen(n - k))
+                    .sum::<T>())
+                    / (T::from_num(n) * cache.gen(0))
             }
         })
     }
@@ -180,43 +163,66 @@ impl<T: Scalar> ScalarMethods for OrdinaryGen<T> {
             if n == 0 {
                 return self.gen(0).exp();
             } else {
-                T::one() / T::from_usize(n)
+                T::one() / T::from_num(n)
                     * (1..=n)
-                        .map(|k| T::from_usize(k) * self.gen(k) * cache.gen(n - k))
-                        .sum::<T>()
+                    .map(|k| T::from_num(k) * self.gen(k) * cache.gen(n - k))
+                    .sum::<T>()
             }
         })
     }
-    fn from_isize(x: isize) -> Self { todo!() }
-    fn from_usize(x: usize) -> Self { todo!() }
-    fn one() -> Self { Self::con(T::one()) }
-    fn zero() -> Self { Self::con(T::zero()) }
-    fn powi(self, x: isize) -> Self {
-        let mut result = Self::one();
-        for _ in 0..x {
-            result = result * &self;
-        }
+
+    fn recip(self) -> Self {
+        let max_power = if self.max_power() == Some(0) { Some(0) } else { None };
+        let result = OrdinaryGen::new(max_power, move |n, cache| {
+            if n == 0 {
+                T::one() / self.gen(0)
+            } else {
+                -T::one() / self.gen(0)
+                    * (1..=n).map(|i| self.gen(i) * cache.gen(n - i)).sum::<T>()
+            }
+        });
+        result.gen(0);
         result
+    }
+
+    fn powi(self, rhs: isize) -> Self { simple_pow(self, rhs) }
+
+    fn from_num<P: ToPrimitive>(x: P) -> Self {
+        Self::con(T::from_num(x))
     }
 }
 
+impl<T: Scalar> Zero for OrdinaryGen<T> {
+    fn zero() -> Self { Self::con(T::zero()) }
+    fn is_zero(&self) -> bool { self.gen(0).is_zero() }
+}
+
+impl<T: Scalar> One for OrdinaryGen<T> {
+    fn one() -> Self {
+        Self::con(T::one())
+    }
+}
+
+impl<T: Scalar> Pow<isize> for OrdinaryGen<T> {
+    type Output = Self;
+    fn pow(self, rhs: isize) -> Self::Output { simple_pow(self, rhs) }
+}
+
 impl<T: Scalar> Functional<T> for OrdinaryGen<T> {
-    fn con(x: T) -> Self { OrdinaryGen::poly([(0, x)].into_iter().collect()) }
-    fn var() -> Self { OrdinaryGen::poly([(1, T::one())].into_iter().collect()) }
+    fn con(x: T) -> Self { OrdinaryGen::poly([(x, 0)]) }
+    fn var() -> Self { OrdinaryGen::poly([(T::one(), 1)]) }
 }
 
 impl<T: Scalar> Display for OrdinaryGen<T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { Debug::fmt(self, f) }
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { Term::print_series(f, self.terms()) }
 }
-
-impl<T: Scalar> ScalarOperand for OrdinaryGen<T> {}
 
 impl<T> Clone for OrdinaryGen<T> {
     fn clone(&self) -> Self { Self(self.0.clone()) }
 }
 
 impl<T: Scalar> Sum for OrdinaryGen<T> {
-    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self { iter.fold(Self::zero(), Self::add) }
+    fn sum<I: Iterator<Item=Self>>(iter: I) -> Self { iter.fold(Self::zero(), Self::add) }
 }
 
 impl_ops_by_value! {
@@ -230,6 +236,7 @@ fn test_con() {
     assert_eq!(f.gen(0), 123.0);
     assert_eq!(f.gen(1), 0.0);
     assert_eq!(f.gen(2), 0.0);
+    assert_eq!("123.0", format!("{}", f));
 }
 
 #[test]
@@ -239,23 +246,25 @@ fn test_var() {
     assert_eq!(f.gen(0), 0.0);
     assert_eq!(f.gen(1), 1.0);
     assert_eq!(f.gen(2), 0.0);
+    assert_eq!("1.0x", format!("{}", f));
 }
 
 #[test]
 fn test_poly() {
-    let f = OrdinaryGen::<f64>::poly([(1, 2.0), (3, 4.0)].into_iter().collect());
+    let f = OrdinaryGen::<f64>::poly([(2.0, 1), (4.0, 3)]);
     assert_eq!(f.max_power(), Some(3));
     assert_eq!(f.gen(0), 0.0);
     assert_eq!(f.gen(1), 2.0);
     assert_eq!(f.gen(2), 0.0);
     assert_eq!(f.gen(3), 4.0);
     assert_eq!(f.gen(4), 0.0);
+    assert_eq!("2.0x + 4.0x³", format!("{}", f));
 }
 
 #[test]
 fn test_add() {
-    let f = OrdinaryGen::<f64>::poly([(1, 2.0), (2, 3.0), (3, 4.0)].into_iter().collect())
-        + OrdinaryGen::<f64>::poly([(2, 3.0), (4, 5.0)].into_iter().collect());
+    let f = OrdinaryGen::<f64>::poly([(2.0, 1), (3.0, 2), (4.0, 3)])
+        + OrdinaryGen::<f64>::poly([(3.0, 2), (5.0, 4)]);
     assert_eq!(f.max_power(), Some(4));
     assert_eq!(f.gen(0), 0.0);
     assert_eq!(f.gen(1), 2.0);
@@ -263,12 +272,13 @@ fn test_add() {
     assert_eq!(f.gen(3), 4.0);
     assert_eq!(f.gen(4), 5.0);
     assert_eq!(f.gen(5), 0.0);
+    assert_eq!("2.0x + 6.0x² + 4.0x³ + 5.0x⁴", format!("{}", f));
 }
 
 #[test]
 fn test_sub() {
-    let f = OrdinaryGen::<f64>::poly([(1, 2.0), (2, 3.0), (3, 4.0)].into_iter().collect())
-        - OrdinaryGen::<f64>::poly([(2, 3.0), (4, 5.0)].into_iter().collect());
+    let f = OrdinaryGen::<f64>::poly([(2.0, 1), (3.0, 2), (4.0, 3)])
+        - OrdinaryGen::<f64>::poly([(3.0, 2), (5.0, 4)]);
     assert_eq!(f.max_power(), Some(4));
     assert_eq!(f.gen(0), 0.0);
     assert_eq!(f.gen(1), 2.0);
@@ -276,12 +286,13 @@ fn test_sub() {
     assert_eq!(f.gen(3), 4.0);
     assert_eq!(f.gen(4), -5.0);
     assert_eq!(f.gen(5), 0.0);
+    assert_eq!("2.0x + 4.0x³ + -5.0x⁴", format!("{}", f));
 }
 
 #[test]
 fn test_mul_fin() {
-    let f = OrdinaryGen::<f64>::poly([(1, 2.0), (2, 3.0)].into_iter().collect())
-        * OrdinaryGen::<f64>::poly([(2, 3.0), (4, 5.0)].into_iter().collect());
+    let f = OrdinaryGen::<f64>::poly([(2.0, 1), (3.0, 2)])
+        * OrdinaryGen::<f64>::poly([(3.0, 2), (5.0, 4)]);
     assert_eq!(f.max_power(), Some(6));
     assert_eq!(f.gen(0), 0.0);
     assert_eq!(f.gen(1), 0.0);
@@ -291,38 +302,42 @@ fn test_mul_fin() {
     assert_eq!(f.gen(5), 10.0);
     assert_eq!(f.gen(6), 15.0);
     assert_eq!(f.gen(7), 0.0);
+    assert_eq!("6.0x³ + 9.0x⁴ + 10.0x⁵ + 15.0x⁶", format!("{}", f));
 }
 
 #[test]
-fn test_ordinary() {
-    println!("{:?}", OrdinaryGen::<f64>::con(1.0));
-    println!(
-        "{:?}",
-        OrdinaryGen::<f64>::con(1.0) * OrdinaryGen::<f64>::con(1.0)
-    );
-    println!("{:?}", Expr::con(1.0).into_functional::<OrdinaryGen<f64>>());
-    let foo = (Expr::var() + Expr::con(1.0))
-        .powi(2)
-        .into_functional::<OrdinaryGen<f64>>();
-    println!("{:?}", foo);
-    println!(
-        "{:?}",
-        (Expr::one() / (Expr::one() - Expr::var())).into_functional::<OrdinaryGen<f64>>()
-    );
-    println!(
-        "{:?}",
-        ((Expr::one() + Expr::var()).sqrt()).into_functional::<OrdinaryGen<f64>>()
-    );
-    println!(
-        "{:?}",
-        ((Expr::from_isize(2) + Expr::from_isize(3) * Expr::var()).exp())
-            .into_functional::<OrdinaryGen<Number>>()
-    );
-    println!(
-        "{:?}",
-        ((Expr::one() / (Expr::from_isize(2) + Expr::from_isize(3) * Expr::var())).powi(2))
-            .exp()
-            .sqrt()
-            .into_functional::<OrdinaryGen<Number>>()
-    );
+fn test_recip1() {
+    let f = OrdinaryGen::<f64>::poly([(1.0, 0), (-1.0, 1)]).recip();
+    assert_eq!(f.gen(0), 1.0);
+    assert_eq!(f.gen(1), 1.0);
+    assert_eq!(f.gen(2), 1.0);
+    assert_eq!("1.0 + 1.0x + 1.0x² + 1.0x³ + 1.0x⁴ + ...", format!("{}", f));
+}
+
+#[test]
+fn test_recip2() {
+    let f = OrdinaryGen::<f64>::poly([(0.5, 0), (3.0, 1)]).recip();
+    assert_eq!("2.0 + -12.0x + 72.0x² + -432.0x³ + 2592.0x⁴ + ...", format!("{}", f));
+}
+
+#[test]
+fn test_recip3() {
+    let f = OrdinaryGen::<f64>::poly([(2.0, 0)]).recip();
+    assert_eq!("0.5", format!("{}", f));
+}
+
+
+#[test]
+fn test_exp() {
+    use crate::number::Number;
+    let f = OrdinaryGen::<Number>::poly_f64([(2.0, 0), (3.0, 1)]).exp() /
+        OrdinaryGen::<Number>::poly_f64([(std::f64::consts::E.powi(2), 0)]);
+    assert_eq!("1.00000 + 3.00000x + 4.5x² + 4.5x³ + 3.375x⁴ + ...", format!("{}", f));
+}
+
+#[test]
+fn test_sqrt() {
+    use crate::number::Number;
+    let f = OrdinaryGen::<Number>::poly_f64([(0.25, 0), (3.0, 1)]).sqrt();
+    assert_eq!("0.5 + 3x + -9x² + 54x³ + -405x⁴ + ...", format!("{}", f));
 }

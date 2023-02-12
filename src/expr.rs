@@ -7,12 +7,13 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::rc::Rc;
 
 use by_address::ByAddress;
+use num::{One, ToPrimitive, Zero};
 use safe_once::unsync::OnceCell;
 
 use crate::eval::Eval;
 use crate::functional::Functional;
 use crate::ops::impl_ops_by_value;
-use crate::scalar::{Scalar, ScalarMethods};
+use crate::scalar::{Scalar,};
 
 pub enum ExprImpl<T: 'static> {
     Add(Expr<T>, Expr<T>),
@@ -24,6 +25,7 @@ pub enum ExprImpl<T: 'static> {
     Sqrt(Expr<T>),
     Poly(BTreeMap<isize, T>),
     Powi(Expr<T>, isize),
+    Recip(Expr<T>),
 }
 
 struct Inner<T: 'static> {
@@ -57,7 +59,7 @@ impl<T: Scalar> Expr<T> {
                             if i == 0 {
                                 None
                             } else {
-                                Some((i - 1, T::from_isize(i) * x))
+                                Some((i - 1, T::from_num(i) * x))
                             }
                         })
                         .collect(),
@@ -66,8 +68,9 @@ impl<T: Scalar> Expr<T> {
                 ExprImpl::Sub(x, y) => x.deriv() - y.deriv(),
                 ExprImpl::Div(x, y) => (x.deriv() * y - x * y.deriv()) / (y * y),
                 ExprImpl::Neg(x) => -x.deriv(),
-                ExprImpl::Sqrt(x) => x.deriv() / (Expr::from(T::from_usize(2)) * self),
+                ExprImpl::Sqrt(x) => x.deriv() / (Expr::from(T::from_num(2)) * self),
                 ExprImpl::Powi(x, n) => todo!("{:?}{:?}", x, n),
+                ExprImpl::Recip(x) => todo!("{:?}", x),
             })
             .clone()
     }
@@ -83,37 +86,10 @@ impl<T: Scalar> Expr<T> {
             .eval(self)
             .clone()
     }
-    // pub fn eval_heter<T2: PartialScalar>(&self, x: T2, upcast: impl FnMut(T) -> T2) -> T2 {
-    //     self.eval_with::<T2>(&x, &mut upcast, &OnceCellMap::new())
-    // }
-    // fn eval_with<T2: PartialScalar>(
-    //     &self,
-    //     x: &T2,
-    //     upcast: &mut impl FnMut(T) -> T2,
-    //     cache: &OnceCellMap<ByAddress<Rc<Inner<T>>>, T2>,
-    // ) -> T2 {
-    //     let result = cache
-    //         .get_or_init(&ByAddress(self.0.clone()), || match &self.0.imp {
-    //             ExprImpl::Add(f, g) => f.eval_with(x, cache) + g.eval_with(x, cache),
-    //             ExprImpl::Mul(f, g) => f.eval_with(x, cache) * g.eval_with(x, cache),
-    //             ExprImpl::Exp(f) => f.eval_with(x, cache).exp(),
-    //             ExprImpl::Poly(p) => p.iter().map(|(&i, c)| c * &x.powi(i)).sum(),
-    //             ExprImpl::Sub(f, g) => f.eval_with(x, cache) - g.eval_with(x, cache),
-    //             ExprImpl::Div(f, g) => {
-    //                 let an = f.eval_with(x, cache);
-    //                 let bn = g.eval_with(x, cache);
-    //                 an / bn
-    //             }
-    //             ExprImpl::Neg(f) => -f.eval_with(x, cache),
-    //             ExprImpl::Sqrt(f) => f.eval_with(x, cache).sqrt(),
-    //         })
-    //         .clone();
-    //     result
-    // }
-    pub fn expected(&self) -> T { self.deriv().eval(T::from_isize(1)) }
+    pub fn expected(&self) -> T { self.deriv().eval(T::one()) }
     pub fn variance(&self) -> T {
         let expected = self.expected();
-        self.deriv().deriv().eval(T::from_isize(1)) + &expected - &expected * &expected
+        self.deriv().deriv().eval(T::one()) + &expected - &expected * &expected
     }
     pub fn poly(poly: BTreeMap<isize, T>) -> Self { Expr::new(ExprImpl::Poly(poly)) }
     pub fn proportion(x: T) -> Self { Self::poly([(1, x)].into_iter().collect()) }
@@ -152,21 +128,19 @@ impl<T: Scalar> From<T> for Expr<T> {
     fn from(value: T) -> Self { Expr::con(value) }
 }
 
-impl<T: Scalar> ScalarMethods for Expr<T> {
+impl<T: Scalar> Scalar for Expr<T> {
     fn sqrt(self) -> Self { Expr::new(ExprImpl::Sqrt(self.clone())) }
     fn exp(self) -> Self { Self::new(ExprImpl::Exp(self.clone())) }
-    fn from_isize(x: isize) -> Self { Expr::con(T::from_isize(x)) }
-    fn from_usize(x: usize) -> Self { Expr::con(T::from_usize(x)) }
-    fn one() -> Self { Expr::con(T::from_usize(1)) }
-    fn zero() -> Self { Expr::con(T::from_usize(0)) }
-    fn powi(self, x: isize) -> Self { Expr::new(ExprImpl::Powi(self, x)) }
+    fn recip(self) -> Self { Self::new(ExprImpl::Recip(self)) }
+    fn powi(self, rhs: isize) -> Self { Expr::new(ExprImpl::Powi(self, rhs)) }
+    fn from_num<P: ToPrimitive>(x: P) -> Self {
+        Expr::con(T::from_num(x))
+    }
 }
-
-//impl<T: Scalar> ScalarOperand for Expr<T> {}
 
 impl<T: Scalar> Sum for Expr<T> {
     fn sum<I: Iterator<Item=Self>>(iter: I) -> Self {
-        let mut total = Expr::con(T::from_usize(0));
+        let mut total = Expr::con(T::zero());
         for x in iter {
             total = total + &x;
         }
@@ -209,6 +183,7 @@ impl<T: Scalar> Display for Expr<T> {
             ExprImpl::Neg(x) => write!(f, "(-{x})"),
             ExprImpl::Sqrt(x) => write!(f, "sqrt{x}"),
             ExprImpl::Powi(x, n) => write!(f, "({}^{})", x, n),
+            ExprImpl::Recip(x) => write!(f, "(1/{})", x),
         }
     }
 }
@@ -218,8 +193,17 @@ impl<T: Scalar> Debug for Expr<T> {
 }
 
 impl<T: Scalar> Functional<T> for Expr<T> {
-    fn var() -> Self { Self::poly([(1, T::from_isize(1))].into_iter().collect()) }
+    fn var() -> Self { Self::poly([(1, T::one())].into_iter().collect()) }
     fn con(x: T) -> Self { Self::poly([(0, x)].into_iter().collect()) }
+}
+
+impl<T: Scalar> Zero for Expr<T> {
+    fn zero() -> Self { Self::con(T::zero()) }
+    fn is_zero(&self) -> bool { panic!() }
+}
+
+impl<T: Scalar> One for Expr<T> {
+    fn one() -> Self { Expr::con(T::one()) }
 }
 
 impl<T> Eq for ExprId<T> {}

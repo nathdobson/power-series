@@ -22,14 +22,15 @@ impl<T: Scalar, T2: Scalar, F: Fn(T) -> T2> Eval<T, T2, F> {
             ExprImpl::Mul(e1, e2) => self.eval(e1) * self.eval(e2),
             ExprImpl::Sub(e1, e2) => self.eval(e1) - self.eval(e2),
             ExprImpl::Div(e1, e2) => self.eval(e1) / self.eval(e2),
-            ExprImpl::Exp(e1) => self.eval(e1).clone().exp(),
+            ExprImpl::Exp(e1) => self.eval(e1).exp(),
             ExprImpl::Neg(e1) => -self.eval(e1),
-            ExprImpl::Sqrt(e1) => self.eval(e1).clone().sqrt(),
+            ExprImpl::Sqrt(e1) => self.eval(e1).sqrt(),
             ExprImpl::Poly(p) => p
                 .iter()
                 .map(|(&i, c)| (self.upcast)(c.clone()) * &self.var.clone().powi(i))
                 .sum(),
-            ExprImpl::Powi(e1, n) => self.eval(e1).clone().powi(*n),
+            ExprImpl::Powi(e1, n) => self.eval(e1).powi(*n),
+            ExprImpl::Recip(e1) => self.eval(e1).recip()
         })
     }
 }

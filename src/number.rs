@@ -3,10 +3,10 @@ use std::iter::Sum;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use inari::Interval;
+use num::{One, ToPrimitive, Zero};
 
 use crate::ops::impl_ops_by_value;
 use crate::scalar::Scalar;
-use crate::scalar::ScalarMethods;
 
 #[derive(Copy, Clone)]
 pub struct Number(Interval);
@@ -61,23 +61,43 @@ impl Neg for Number {
     fn neg(self) -> Self::Output { Self::new(-self.0) }
 }
 
-impl ScalarMethods for Number {
+impl Scalar for Number {
     fn sqrt(self) -> Self { Number::new(self.0.sqrt()) }
     fn exp(self) -> Self { Number::new(self.0.exp()) }
-    fn from_isize(x: isize) -> Self {
-        Number::new(Interval::try_from((x as f64, x as f64)).unwrap())
+
+    fn recip(self) -> Self {
+        Number::new(self.0.recip())
     }
-    fn from_usize(x: usize) -> Self {
-        Number::new(Interval::try_from((x as f64, x as f64)).unwrap())
+    fn powi(self, rhs: isize) -> Self {
+        Number::new(self.0.powi(rhs.try_into().unwrap()))
     }
-    fn one() -> Self { Number::new(Interval::try_from((1.0, 1.0)).unwrap()) }
-    fn zero() -> Self { Number::new(Interval::try_from((0.0, 0.0)).unwrap()) }
-    fn powi(self, x: isize) -> Self { Number::new(self.0.powi(x as i32)) }
-    fn is_zero(&self) -> bool { self.0.contains(0.0) }
+
+    // fn from_isize(x: isize) -> Self {
+    //     Number::new(Interval::try_from((x as f64, x as f64)).unwrap())
+    // }
+    // fn from_usize(x: usize) -> Self {
+    //     Number::new(Interval::try_from((x as f64, x as f64)).unwrap())
+    // }
+    // fn one() -> Self { Number::new(Interval::try_from((1.0, 1.0)).unwrap()) }
+    // fn zero() -> Self { Number::new(Interval::try_from((0.0, 0.0)).unwrap()) }
+    // fn powi(self, x: isize) -> Self { Number::new(self.0.powi(x as i32)) }
+    fn from_num<T: ToPrimitive>(x: T) -> Self {
+        let x = x.to_f64().unwrap();
+        Number::new(Interval::try_from((x, x)).unwrap())
+    }
 }
 
 impl Sum for Number {
     fn sum<I: Iterator<Item=Self>>(iter: I) -> Self { iter.fold(Self::zero(), Self::add) }
+}
+
+impl Zero for Number {
+    fn zero() -> Self { Self::from_num(0) }
+    fn is_zero(&self) -> bool { self.0.contains(0.0) }
+}
+
+impl One for Number {
+    fn one() -> Self { Self::from_num(1) }
 }
 
 impl Display for Number {

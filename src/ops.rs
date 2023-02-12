@@ -71,6 +71,24 @@ macro_rules! impl_ops_by_value {
                 fn neg(self);
             }
         }
+        // impl < $($TypeArgs)*  > ::num_traits::pow::Pow<usize> for $($TypeName)* {
+        //     type Output = $($TypeName)*;
+        //     fn pow(self, rhs:usize) -> $($TypeName)*{
+        //         ::num_traits::pow::Pow::<isize>::pow(self, rhs as isize)
+        //     }
+        // }
+        // impl < $($TypeArgs)*  > ::num_traits::pow::Pow<usize> for &$($TypeName)* {
+        //     type Output = $($TypeName)*;
+        //     fn pow(self, rhs:usize) -> $($TypeName)*{
+        //         ::num_traits::pow::Pow::<usize>::pow(::std::clone::Clone::clone(self), rhs)
+        //     }
+        // }
+        // impl < $($TypeArgs)*  > ::num_traits::pow::Pow<isize> for &$($TypeName)* {
+        //     type Output = $($TypeName)*;
+        //     fn pow(self, rhs:isize) -> $($TypeName)*{
+        //         ::num_traits::pow::Pow::<isize>::pow(::std::clone::Clone::clone(self), rhs)
+        //     }
+        // }
     }
 }
 

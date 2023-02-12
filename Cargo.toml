@@ -9,3 +9,5 @@ edition = "2021"
 inari = "1.0.0"
 by_address = "1.1.0"
 safe-once = { git = "https://github.com/nathdobson/safe-once.git", rev = "b591e31d653b910443b4a59021047b90de92eddb" }
+itertools = "0.10.5"
+num = "0.4.0"
