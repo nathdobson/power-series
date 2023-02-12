@@ -1,3 +1,13 @@
+#![feature(trait_alias)]
+
+pub mod scalar;
+pub mod number;
+pub mod ops;
+pub mod expr;
+pub mod eval;
+pub mod once_cell_map;
+pub mod functional;
+
 pub fn add(left: usize, right: usize) -> usize {
     left + right
 }

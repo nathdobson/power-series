@@ -1,0 +1,113 @@
+use std::fmt::{Debug, Display, Formatter, Write};
+use std::iter::Sum;
+use std::ops::{Add, Div, Mul, Neg, Sub};
+
+use inari::Interval;
+
+use crate::ops::impl_ops_by_value;
+use crate::scalar::Scalar;
+use crate::scalar::ScalarMethods;
+
+#[derive(Copy, Clone)]
+pub struct Number(Interval);
+
+impl Number {
+    pub fn from_f64(x: f64) -> Self { Self::new(Interval::try_from((x, x)).unwrap()) }
+    pub fn into_f64(self) -> f64 { self.0.mid() }
+    #[track_caller]
+    pub fn new(x: Interval) -> Self {
+        if x.is_empty() {
+            panic!("empty");
+        }
+        if x.is_entire() {
+            panic!("entire");
+        }
+        assert!(x.is_common_interval());
+        Number(x)
+    }
+}
+
+impl Add for Number {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self::Output { Self::new(self.0 + rhs.0) }
+}
+
+impl Mul for Number {
+    type Output = Self;
+    fn mul(self, rhs: Self) -> Self::Output { Self::new(self.0 * rhs.0) }
+}
+
+impl Sub for Number {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self::Output { Self::new(self.0 - rhs.0) }
+}
+
+impl Div for Number {
+    type Output = Self;
+    fn div(self, rhs: Self) -> Self::Output {
+        if rhs.0.contains(0.0) {
+            if rhs.0.is_singleton() {
+                panic!("division by zero");
+            } else {
+                panic!("division contains zero");
+            }
+        }
+        Self::new(self.0 / rhs.0)
+    }
+}
+
+impl Neg for Number {
+    type Output = Self;
+    fn neg(self) -> Self::Output { Self::new(-self.0) }
+}
+
+impl ScalarMethods for Number {
+    fn sqrt(self) -> Self { Number::new(self.0.sqrt()) }
+    fn exp(self) -> Self { Number::new(self.0.exp()) }
+    fn from_isize(x: isize) -> Self {
+        Number::new(Interval::try_from((x as f64, x as f64)).unwrap())
+    }
+    fn from_usize(x: usize) -> Self {
+        Number::new(Interval::try_from((x as f64, x as f64)).unwrap())
+    }
+    fn one() -> Self { Number::new(Interval::try_from((1.0, 1.0)).unwrap()) }
+    fn zero() -> Self { Number::new(Interval::try_from((0.0, 0.0)).unwrap()) }
+    fn powi(self, x: isize) -> Self { Number::new(self.0.powi(x as i32)) }
+    fn is_zero(&self) -> bool { self.0.contains(0.0) }
+}
+
+impl Sum for Number {
+    fn sum<I: Iterator<Item=Self>>(iter: I) -> Self { iter.fold(Self::zero(), Self::add) }
+}
+
+impl Display for Number {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result { <Self as Debug>::fmt(self, f) }
+}
+
+impl_ops_by_value!(
+    impl <[]>  [Number];
+);
+
+impl Debug for Number {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut mid = String::new();
+        write!(&mut mid, "{}", self.0.mid())?;
+        if mid.len() > 7 {
+            mid.clear();
+            write!(&mut mid, "{:.5}", self.0.mid())?;
+        }
+        let err = self.0.wid();
+        if self.0.is_singleton() || err < 0.00001 {
+            write!(f, "{}", mid)
+        } else {
+            write!(f, "{}(±{:.000})", mid, err)
+        }
+    }
+}
+
+#[test]
+fn test() {
+    fn f<T: Scalar>() {}
+    fn g() { f::<Number>() }
+    g()
+}

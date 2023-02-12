@@ -6,3 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+inari = "1.0.0"
+by_address = "1.1.0"
+safe-once = { git = "https://github.com/nathdobson/safe-once.git", rev = "b591e31d653b910443b4a59021047b90de92eddb" }
