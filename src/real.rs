@@ -6,7 +6,7 @@ use inari::Interval;
 use num::{One, ToPrimitive, Zero};
 
 use crate::ops::impl_ops_by_value;
-use crate::scalar::Scalar;
+use crate::field::Field;
 
 #[derive(Copy, Clone)]
 pub struct Number(Interval);
@@ -61,7 +61,7 @@ impl Neg for Number {
     fn neg(self) -> Self::Output { Self::new(-self.0) }
 }
 
-impl Scalar for Number {
+impl Field for Number {
     fn sqrt(self) -> Self { Number::new(self.0.sqrt()) }
     fn exp(self) -> Self { Number::new(self.0.exp()) }
 
@@ -71,16 +71,6 @@ impl Scalar for Number {
     fn powi(self, rhs: isize) -> Self {
         Number::new(self.0.powi(rhs.try_into().unwrap()))
     }
-
-    // fn from_isize(x: isize) -> Self {
-    //     Number::new(Interval::try_from((x as f64, x as f64)).unwrap())
-    // }
-    // fn from_usize(x: usize) -> Self {
-    //     Number::new(Interval::try_from((x as f64, x as f64)).unwrap())
-    // }
-    // fn one() -> Self { Number::new(Interval::try_from((1.0, 1.0)).unwrap()) }
-    // fn zero() -> Self { Number::new(Interval::try_from((0.0, 0.0)).unwrap()) }
-    // fn powi(self, x: isize) -> Self { Number::new(self.0.powi(x as i32)) }
     fn from_num<T: ToPrimitive>(x: T) -> Self {
         let x = x.to_f64().unwrap();
         Number::new(Interval::try_from((x, x)).unwrap())
@@ -127,7 +117,7 @@ impl Debug for Number {
 
 #[test]
 fn test() {
-    fn f<T: Scalar>() {}
+    fn f<T: Field>() {}
     fn g() { f::<Number>() }
     g()
 }
